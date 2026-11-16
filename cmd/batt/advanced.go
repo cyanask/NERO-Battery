@@ -1,0 +1,160 @@
+package main
+
+import (
+	"fmt"
+	"log/slog"
+
+	"github.com/charlie0129/batt/pkg/compatibility"
+	"github.com/charlie0129/batt/pkg/config"
+	"github.com/spf13/cobra"
+)
+
+func NewSetPreventIdleSleepCommand() *cobra.Command {
+	return annotateCapability(newEnableDisableCommand(
+		"prevent-idle-sleep",
+		"Set whether to prevent idle sleep during a charging session",
+		`Set whether to prevent idle sleep during a charging session.
+
+Due to macOS limitations, batt will be paused when your computer goes to sleep. As a result, when you are in a charging session and your computer goes to sleep, there is no way for batt to stop charging (since batt is paused by macOS) and the battery will charge to 100%. This option, together with disable-charging-pre-sleep, will prevent this from happening.
+
+This option tells macOS NOT to go to sleep when the computer is in a charging session, so batt can continue to work until charging is finished. Note that it will only prevent **idle** sleep, when 1) charging is active 2) battery charge limit is enabled. So your computer can go to sleep as soon as a charging session is completed.
+
+However, this options does not prevent manual sleep (limitation of macOS). For example, if you manually put your computer to sleep (by choosing the Sleep option in the top-left Apple menu) or close the lid, batt will still be paused and the issue mentioned above will still happen. This is where disable-charging-pre-sleep comes in.`,
+		func() (string, error) { return apiClient.SetPreventIdleSleep(true) },
+		func() (string, error) { return apiClient.SetPreventIdleSleep(false) },
+	), compatibility.FeatureSleepHooks)
+}
+
+func NewAdapterModeCommand() *cobra.Command {
+	return newEnableDisableCommand(
+		"adapter-mode",
+		"Enable adapter charging control mode",
+		`Enable adapter charging control mode.
+
+When the SMC charge-control keys are gated (macOS 27 firmware), batt can hold the limit by cutting wall power, running on battery between the lower and upper limits. It is opt-in for that reason and takes effect immediately.`,
+		func() (string, error) { return apiClient.SetAdapterMode(true) },
+		func() (string, error) { return apiClient.SetAdapterMode(false) },
+	)
+}
+
+func NewNoDrainCommand() *cobra.Command {
+	return newEnableDisableCommand(
+		"no-drain",
+		"Keep wall power above the native charge limit (macOS 27, experimental)",
+		`Keep the battery from draining while it is above the native charge limit on macOS 27.
+
+This is opt-in and experimental. batt writes powerd's no-drain charge policy and must restart powerd when the policy changes. A powerd restart drops sleep assertions owned by other applications, including caffeinate. batt defers each restart until those assertions are gone and uses the regular native limit meanwhile. The setting is not available in adapter or firmware-managed modes.
+
+macOS may still charge to 100% for battery maintenance. While no-drain is enabled, batt does not provide a lower-limit hysteresis band.`,
+		func() (string, error) { return apiClient.SetNoDrain(true) },
+		func() (string, error) { return apiClient.SetNoDrain(false) },
+	)
+}
+
+func NewSetDisableChargingPreSleepCommand() *cobra.Command {
+	return annotateCapability(newEnableDisableCommand(
+		"disable-charging-pre-sleep",
+		"Set whether to disable charging before sleep if charge limit is enabled",
+		`Set whether to disable charging before sleep if charge limit is enabled.
+
+As described in preventing-idle-sleep, batt will be paused by macOS when your computer goes to sleep, and there is no way for batt to continue controlling battery charging. This option will disable charging just before sleep, so your computer will not overcharge during sleep, even if the battery charge is below the limit.`,
+		func() (string, error) { return apiClient.SetDisableChargingPreSleep(true) },
+		func() (string, error) { return apiClient.SetDisableChargingPreSleep(false) },
+	), compatibility.FeatureSleepHooks)
+}
+
+func NewSetPreventSystemSleepCommand() *cobra.Command {
+	return annotateCapability(newEnableDisableCommand(
+		"prevent-system-sleep",
+		"Set whether to prevent system sleep during a charging session (experimental)",
+		`This option tells macOS to create power assertion, which prevents sleep, when all conditions are met:
+
+1) charging is active
+2) battery charge limit is enabled
+3) computer is connected to charger.
+So your computer can go to sleep as soon as a charging session is completed / charger disconnected.
+
+Does similar thing to prevent-idle-sleep, but works for manual sleep too.
+
+Note: please disable disable-charging-pre-sleep and prevent-idle-sleep, while this feature is in use`,
+		func() (string, error) { return apiClient.SetPreventSystemSleep(true) },
+		func() (string, error) { return apiClient.SetPreventSystemSleep(false) },
+	), compatibility.FeatureSleepHooks)
+}
+
+func NewSetPreventSleepOnAdapterDisableCommand() *cobra.Command {
+	return annotateCapability(newEnableDisableCommand(
+		"prevent-sleep-on-adapter-disable",
+		"Keep the Mac awake while the power adapter is disabled (experimental)",
+		`Disabling the power adapter makes macOS behave as if the power cord was unplugged. In Clamshell mode (lid closed, external display attached) macOS then ends Clamshell mode and your external display goes to sleep immediately. This affects "batt adapter disable", the discharge phases of auto calibration, and charge limiting in adapter mode.
+
+This option suppresses sleep entirely while the adapter is disabled, so Clamshell mode survives. It uses the SleepDisabled system power setting, the same mechanism as "pmset disablesleep", because power assertions do not cover lid-close sleep.
+
+WARNING: While the adapter is disabled your Mac will not sleep at all, even with the lid closed. If placed in a bag while unplugged or discharging, it can overheat dangerously or drain the battery to 0%. Use only when monitored. batt restores the previous setting as soon as the adapter is enabled again, and also after a restart if the daemon was killed in between.`,
+		func() (string, error) { return apiClient.SetPreventSleepOnAdapterDisable(true) },
+		func() (string, error) { return apiClient.SetPreventSleepOnAdapterDisable(false) },
+	), compatibility.FeatureAdapterSleepPolicy)
+}
+
+func NewSetControlMagSafeLEDCommand() *cobra.Command {
+	use := "magsafe-led"
+	cmd := &cobra.Command{
+		Use:     use,
+		GroupID: gAdvanced,
+		Short:   "Control MagSafe LED according to battery charging status",
+	}
+
+	enable := &cobra.Command{
+		Use: "enable",
+		Short: `Enable MagSafe LED control. The LED will reflect charging status:
+		- Green: Charging is stopped.
+		- Orange: Charging is in progress.
+		- Off: Forced off, or temporarily after wake with active charging control.`,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			ret, err := apiClient.SetControlMagSafeLED(config.ControlMagSafeModeEnabled)
+			if err != nil {
+				return fmt.Errorf("failed to set to %s: %v", use, err)
+			}
+			if ret != "" {
+				slog.Info(fmt.Sprintf("daemon responded: %s", ret))
+			}
+			slog.Info(fmt.Sprintf("successfully set to %s", use))
+			return nil
+		},
+	}
+
+	disable := &cobra.Command{
+		Use:   "disable",
+		Short: "Disable MagSafe LED control.",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			ret, err := apiClient.SetControlMagSafeLED(config.ControlMagSafeModeDisabled)
+			if err != nil {
+				return fmt.Errorf("failed to set to %s: %v", use, err)
+			}
+			if ret != "" {
+				slog.Info(fmt.Sprintf("daemon responded: %s", ret))
+			}
+			slog.Info(fmt.Sprintf("successfully set to %s", use))
+			return nil
+		},
+	}
+
+	alwaysOff := &cobra.Command{
+		Use:   "always-off",
+		Short: "Force the MagSafe LED to stay off.",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			ret, err := apiClient.SetControlMagSafeLED(config.ControlMagSafeModeAlwaysOff)
+			if err != nil {
+				return fmt.Errorf("failed to set to %s: %v", use, err)
+			}
+			if ret != "" {
+				slog.Info(fmt.Sprintf("daemon responded: %s", ret))
+			}
+			slog.Info(fmt.Sprintf("successfully set to %s", use))
+			return nil
+		},
+	}
+
+	cmd.AddCommand(enable, disable, alwaysOff)
+	return annotateCapability(cmd, compatibility.FeatureMagSafeLED)
+}

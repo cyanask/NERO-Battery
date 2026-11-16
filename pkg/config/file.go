@@ -1,0 +1,803 @@
+// NERO Battery modifications, 2026-11-16. Distributed under GPL v2; see docs/CHANGES.md.
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	pkgerrors "github.com/pkg/errors"
+
+	"github.com/charlie0129/batt/pkg/utils/ptr"
+)
+
+const (
+	ctrlMagSafeModeEnabledStr   = "enabled"
+	ctrlMagSafeModeDisabledStr  = "disabled"
+	ctrlMagSafeModeAlwaysOffStr = "always-off"
+)
+
+type ControlMagSafeMode string
+
+const (
+	ControlMagSafeModeEnabled   ControlMagSafeMode = ctrlMagSafeModeEnabledStr
+	ControlMagSafeModeDisabled  ControlMagSafeMode = ctrlMagSafeModeDisabledStr
+	ControlMagSafeModeAlwaysOff ControlMagSafeMode = ctrlMagSafeModeAlwaysOffStr
+)
+
+var (
+	defaultFileConfig = &RawFileConfig{
+		Limit:                        ptr.To(80),
+		PreventIdleSleep:             ptr.To(true),
+		DisableChargingPreSleep:      ptr.To(true),
+		PreventSleepOnAdapterDisable: ptr.To(false),
+		PreventSystemSleep:           ptr.To(false),
+		AllowNonRootAccess:           ptr.To(false),
+		AdapterMode:                  ptr.To(false),
+		NoDrain:                      ptr.To(false),
+		LowerLimitDelta:              ptr.To(2),
+
+		CalibrationDischargeThreshold:  ptr.To(15),
+		CalibrationHoldDurationMinutes: ptr.To(120),
+
+		// There are Macs without MagSafe LED. We only do checks when the user
+		// explicitly enables this feature. In the future, we might add a check
+		// that disables this feature if the Mac does not have a MagSafe LED.
+		ControlMagSafeLED: ptr.To(ControlMagSafeModeDisabled),
+	}
+)
+
+var _ Config = &File{}
+
+type File struct {
+	c        *RawFileConfig
+	mu       *sync.RWMutex
+	filepath string
+}
+
+func NewFile(configPath string) (*File, error) {
+	f := &File{
+		filepath: configPath,
+		mu:       &sync.RWMutex{},
+	}
+	err := f.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	return f, nil
+}
+
+func NewFileFromConfig(c *RawFileConfig, configPath string) *File {
+	if c == nil {
+		c = defaultFileConfig
+	}
+
+	f := &File{
+		c:        c,
+		mu:       &sync.RWMutex{},
+		filepath: configPath,
+	}
+
+	return f
+}
+
+func (c *ControlMagSafeMode) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		switch s {
+		case ctrlMagSafeModeEnabledStr:
+			*c = ControlMagSafeModeEnabled
+		case ctrlMagSafeModeDisabledStr:
+			*c = ControlMagSafeModeDisabled
+		case ctrlMagSafeModeAlwaysOffStr:
+			*c = ControlMagSafeModeAlwaysOff
+		default:
+			slog.Warn(fmt.Sprintf("invalid ControlMagSafeMode %q, falling back to %q", s, ControlMagSafeModeDisabled))
+			*c = ControlMagSafeModeDisabled
+		}
+		return nil
+	}
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		if b {
+			*c = ControlMagSafeModeEnabled
+		} else {
+			*c = ControlMagSafeModeDisabled
+		}
+		return nil
+	}
+	return nil
+}
+
+type RawFileConfig struct {
+	Limit                   *int                `json:"limit,omitempty"`
+	PreventIdleSleep        *bool               `json:"preventIdleSleep,omitempty"`
+	DisableChargingPreSleep *bool               `json:"disableChargingPreSleep,omitempty"`
+	PreventSystemSleep      *bool               `json:"preventSystemSleep,omitempty"`
+	AllowNonRootAccess      *bool               `json:"allowNonRootAccess,omitempty"`
+	AdapterMode             *bool               `json:"adapterMode,omitempty"`
+	NoDrain                 *bool               `json:"noDrain,omitempty"`
+	LowerLimitDelta         *int                `json:"lowerLimitDelta,omitempty"`
+	ControlMagSafeLED       *ControlMagSafeMode `json:"controlMagSafeLED,omitempty"`
+
+	CalibrationDischargeThreshold  *int    `json:"calibrationDischargeThreshold,omitempty"`
+	CalibrationHoldDurationMinutes *int    `json:"calibrationHoldDurationMinutes,omitempty"`
+	Cron                           *string `json:"cron,omitempty"`
+
+	DisableUntil    *time.Time `json:"disableUntil,omitempty"`
+	PreDisableLimit *int       `json:"preDisableLimit,omitempty"`
+
+	AdapterDisableUntil          *time.Time `json:"adapterDisableUntil,omitempty"`
+	PreventSleepOnAdapterDisable *bool      `json:"preventSleepOnAdapterDisable,omitempty"`
+
+	ChargeOnceTarget *int `json:"chargeOnceTarget,omitempty"`
+}
+
+func NewRawFileConfigFromConfig(c Config) (*RawFileConfig, error) {
+	if c == nil {
+		return nil, pkgerrors.New("config is nil")
+	}
+
+	rawConfig := &RawFileConfig{
+		Limit:                        ptr.To(c.UpperLimit()),
+		PreventIdleSleep:             ptr.To(c.PreventIdleSleep()),
+		DisableChargingPreSleep:      ptr.To(c.DisableChargingPreSleep()),
+		PreventSystemSleep:           ptr.To(c.PreventSystemSleep()),
+		PreventSleepOnAdapterDisable: ptr.To(c.PreventSleepOnAdapterDisable()),
+		AllowNonRootAccess:           ptr.To(c.AllowNonRootAccess()),
+		AdapterMode:                  ptr.To(c.AdapterMode()),
+		NoDrain:                      ptr.To(c.NoDrain()),
+		LowerLimitDelta:              ptr.To(c.UpperLimit() - c.LowerLimit()),
+		ControlMagSafeLED:            ptr.To(c.ControlMagSafeLED()),
+		Cron:                         ptr.To(c.Cron()),
+	}
+
+	if until := c.DisableUntil(); !until.IsZero() {
+		rawConfig.DisableUntil = ptr.To(until)
+		rawConfig.PreDisableLimit = ptr.To(c.PreDisableLimit())
+	}
+	if until := c.AdapterDisableUntil(); !until.IsZero() {
+		rawConfig.AdapterDisableUntil = ptr.To(until)
+	}
+	if target := c.ChargeOnceTarget(); target != 0 {
+		rawConfig.ChargeOnceTarget = ptr.To(target)
+	}
+
+	return rawConfig, nil
+}
+
+func (f *File) UpperLimit() int {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	var limit int
+
+	if f.c.Limit != nil {
+		limit = *f.c.Limit
+	} else {
+		limit = *defaultFileConfig.Limit
+	}
+
+	return limit
+}
+
+func (f *File) LowerLimit() int {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	var delta int
+
+	if f.c.LowerLimitDelta != nil {
+		delta = *f.c.LowerLimitDelta
+	} else {
+		delta = *defaultFileConfig.LowerLimitDelta
+	}
+
+	return f.UpperLimit() - delta
+}
+
+func (f *File) PreventIdleSleep() bool {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	var preventIdleSleep bool
+
+	if f.c.PreventIdleSleep != nil {
+		preventIdleSleep = *f.c.PreventIdleSleep
+	} else {
+		preventIdleSleep = *defaultFileConfig.PreventIdleSleep
+	}
+
+	return preventIdleSleep
+}
+
+func (f *File) DisableChargingPreSleep() bool {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	var disableChargingPreSleep bool
+
+	if f.c.DisableChargingPreSleep != nil {
+		disableChargingPreSleep = *f.c.DisableChargingPreSleep
+	} else {
+		disableChargingPreSleep = *defaultFileConfig.DisableChargingPreSleep
+	}
+
+	return disableChargingPreSleep
+}
+
+func (f *File) PreventSystemSleep() bool {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	var preventSystemSleep bool
+
+	if f.c.PreventSystemSleep != nil {
+		preventSystemSleep = *f.c.PreventSystemSleep
+	} else {
+		preventSystemSleep = *defaultFileConfig.PreventSystemSleep
+	}
+
+	return preventSystemSleep
+}
+
+func (f *File) AllowNonRootAccess() bool {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	var allowNonRootAccess bool
+
+	if f.c.AllowNonRootAccess != nil {
+		allowNonRootAccess = *f.c.AllowNonRootAccess
+	} else {
+		allowNonRootAccess = *defaultFileConfig.AllowNonRootAccess
+	}
+
+	return allowNonRootAccess
+}
+
+func (f *File) AdapterMode() bool {
+	if f.c == nil {
+		panic("config is nil")
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if f.c.AdapterMode != nil {
+		return *f.c.AdapterMode
+	}
+	return *defaultFileConfig.AdapterMode
+}
+
+func (f *File) NoDrain() bool {
+	if f.c == nil {
+		panic("config is nil")
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if f.c.NoDrain != nil {
+		return *f.c.NoDrain
+	}
+	return *defaultFileConfig.NoDrain
+}
+
+func (f *File) ControlMagSafeLED() ControlMagSafeMode {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	var ControlMagSafeLED ControlMagSafeMode
+
+	if f.c.ControlMagSafeLED != nil {
+		ControlMagSafeLED = *f.c.ControlMagSafeLED
+	} else {
+		ControlMagSafeLED = *defaultFileConfig.ControlMagSafeLED
+	}
+
+	return ControlMagSafeLED
+}
+
+// CalibrationDischargeThreshold returns the discharge threshold percentage (< this value ends discharge phase).
+// Default 15 if not set or invalid (<10 or > 50). We clamp to [10,50] to avoid pathological values.
+func (f *File) CalibrationDischargeThreshold() int {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	if f.c.CalibrationDischargeThreshold == nil {
+		return 15
+	}
+	val := *f.c.CalibrationDischargeThreshold
+	if val < 10 {
+		return 10
+	}
+	if val > 50 { // upper sanity bound; calibration below 50% is reasonable
+		return 50
+	}
+	return val
+}
+
+// CalibrationHoldDurationMinutes returns duration minutes to hold at full charge.
+// Default 120 if not set or invalid (< 0 or > 1440).
+func (f *File) CalibrationHoldDurationMinutes() int {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	if f.c.CalibrationHoldDurationMinutes == nil {
+		return 120
+	}
+	val := *f.c.CalibrationHoldDurationMinutes
+	if val < 0 || val > 24*60 { // cap at 24h
+		return 120
+	}
+	return val
+}
+
+func (f *File) SetUpperLimit(i int) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	delta := f.UpperLimit() - f.LowerLimit()
+	if i > 100 || i-delta < 0 {
+		panic("upper limit must be between 0 and 100 and greater than lower limit")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.c.Limit = &i
+}
+
+func (f *File) SetLowerLimit(i int) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	if i < 0 || i >= f.UpperLimit() {
+		panic("lower limit must be between 0 and upper limit")
+	}
+
+	delta := f.UpperLimit() - i
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.c.LowerLimitDelta = &delta
+}
+
+func (f *File) SetPreventIdleSleep(b bool) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.c.PreventIdleSleep = &b
+}
+
+func (f *File) SetDisableChargingPreSleep(b bool) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.c.DisableChargingPreSleep = &b
+}
+
+func (f *File) PreventSleepOnAdapterDisable() bool {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	if f.c.PreventSleepOnAdapterDisable != nil {
+		return *f.c.PreventSleepOnAdapterDisable
+	}
+
+	return *defaultFileConfig.PreventSleepOnAdapterDisable
+}
+
+func (f *File) SetPreventSystemSleep(b bool) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.c.PreventSystemSleep = &b
+}
+
+func (f *File) SetPreventSleepOnAdapterDisable(b bool) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.c.PreventSleepOnAdapterDisable = &b
+}
+
+func (f *File) SetAllowNonRootAccess(b bool) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.c.AllowNonRootAccess = &b
+}
+
+func (f *File) SetAdapterMode(b bool) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.c.AdapterMode = &b
+}
+
+func (f *File) SetNoDrain(b bool) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.c.NoDrain = &b
+}
+
+func (f *File) SetControlMagSafeLED(mode ControlMagSafeMode) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.c.ControlMagSafeLED = ptr.To(mode)
+}
+
+func (f *File) Cron() string {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	var cron string
+
+	if f.c.Cron != nil {
+		cron = *f.c.Cron
+	}
+
+	return cron
+}
+
+func (f *File) SetCron(cron string) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.c.Cron = ptr.To(cron)
+}
+
+func (f *File) SetCalibrationDischargeThreshold(i int) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.c.CalibrationDischargeThreshold = &i
+}
+
+func (f *File) SetCalibrationHoldDurationMinutes(i int) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.c.CalibrationHoldDurationMinutes = &i
+}
+
+func (f *File) DisableUntil() time.Time {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	if f.c.DisableUntil == nil {
+		return time.Time{}
+	}
+
+	return *f.c.DisableUntil
+}
+
+func (f *File) PreDisableLimit() int {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	if f.c.PreDisableLimit == nil {
+		return 0
+	}
+
+	return *f.c.PreDisableLimit
+}
+
+// SetDisableTimer records that the upper limit must be restored to prevLimit
+// at the given time. Use ClearDisableTimer to drop it.
+func (f *File) SetDisableTimer(until time.Time, prevLimit int) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	if until.IsZero() {
+		panic("disable deadline must not be zero")
+	}
+
+	if prevLimit < 10 || prevLimit > 100 {
+		panic("limit to restore must be between 10 and 100")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.c.DisableUntil = ptr.To(until)
+	f.c.PreDisableLimit = ptr.To(prevLimit)
+}
+
+func (f *File) ClearDisableTimer() {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.c.DisableUntil = nil
+	f.c.PreDisableLimit = nil
+}
+
+func (f *File) AdapterDisableUntil() time.Time {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	if f.c.AdapterDisableUntil == nil {
+		return time.Time{}
+	}
+
+	return *f.c.AdapterDisableUntil
+}
+
+// SetAdapterDisableTimer records when a temporarily disabled power adapter
+// must be enabled again. Use ClearAdapterDisableTimer to drop it.
+func (f *File) SetAdapterDisableTimer(until time.Time) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+	if until.IsZero() {
+		panic("adapter disable deadline must not be zero")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.c.AdapterDisableUntil = ptr.To(until)
+}
+
+func (f *File) ClearAdapterDisableTimer() {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.c.AdapterDisableUntil = nil
+}
+
+// ChargeOnceTarget returns the charge percentage a running one-time charge aims
+// for, or 0 when no one-time charge is running. A value outside 10-100 is
+// treated as absent so a hand-edited config cannot override the configured
+// charge limit.
+func (f *File) ChargeOnceTarget() int {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	if f.c.ChargeOnceTarget == nil {
+		return 0
+	}
+
+	target := *f.c.ChargeOnceTarget
+	if target < 10 || target > 100 {
+		return 0
+	}
+
+	return target
+}
+
+// SetChargeOnceTarget starts a one-time charge to the given percentage. It
+// leaves the configured charge limit untouched, so there is nothing to restore
+// once the target is reached. Use ClearChargeOnceTarget to drop it.
+func (f *File) SetChargeOnceTarget(target int) {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	if target < 10 || target > 100 {
+		panic("one-time charge target must be between 10 and 100")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.c.ChargeOnceTarget = ptr.To(target)
+}
+
+func (f *File) ClearChargeOnceTarget() {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.c.ChargeOnceTarget = nil
+}
+
+func (f *File) Load() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	fp, err := os.Open(f.filepath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// If the file does not exist, return the empty config.
+			// Do not make f.c a nil.
+			f.c = &RawFileConfig{}
+			return nil
+		}
+		return pkgerrors.Wrapf(err, "failed to open file %s", f.filepath)
+	}
+	defer func(fp *os.File) {
+		err := fp.Close()
+		if err != nil {
+			slog.Warn(fmt.Sprintf("failed to close file %s", f.filepath))
+		}
+	}(fp)
+
+	// Since we want to tell if the file is empty, using json.Decoder will
+	// not work.
+	b, err := io.ReadAll(fp)
+	if err != nil {
+		return pkgerrors.Wrapf(err, "failed to read file %s", f.filepath)
+	}
+	configString := string(b)
+
+	if strings.TrimSpace(configString) == "" {
+		// If the file is empty, return the empty config.
+		// Do not make f.c a nil.
+		f.c = &RawFileConfig{}
+		return nil
+	}
+
+	conf := RawFileConfig{}
+	err = json.Unmarshal(b, &conf)
+	if err != nil {
+		return pkgerrors.Wrapf(err, "failed to unmarshal config from file %s", f.filepath)
+	}
+	f.c = &conf
+
+	return nil
+}
+
+func (f *File) Save() error {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	if f.c == nil {
+		return pkgerrors.New("config is nil")
+	}
+
+	// Commit a complete private configuration atomically. A failed write must
+	// leave the last good limit available after a service restart.
+	fp, err := os.CreateTemp(filepath.Dir(f.filepath), ".batt-config-*")
+	if err != nil {
+		return pkgerrors.Wrapf(err, "failed to open file %s", f.filepath)
+	}
+	defer os.Remove(fp.Name())
+	defer fp.Close()
+
+	enc := json.NewEncoder(fp)
+	enc.SetIndent("", "  ")
+	err = enc.Encode(f.c)
+	if err != nil {
+		return pkgerrors.Wrapf(err, "failed to encode config to file %s", f.filepath)
+	}
+	if err := fp.Sync(); err != nil {
+		return err
+	}
+	if err := fp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(fp.Name(), f.filepath)
+}
+
+func (f *File) LogValue() slog.Value {
+	if f.c == nil {
+		panic("config is nil")
+	}
+
+	return slog.GroupValue(
+		slog.Int("upperLimit", f.UpperLimit()),
+		slog.Int("lowerLimit", f.LowerLimit()),
+		slog.Bool("preventIdleSleep", f.PreventIdleSleep()),
+		slog.Bool("disableChargingPreSleep", f.DisableChargingPreSleep()),
+		slog.Bool("preventSystemSleep", f.PreventSystemSleep()),
+		slog.Bool("preventSleepOnAdapterDisable", f.PreventSleepOnAdapterDisable()),
+		slog.Bool("allowNonRootAccess", f.AllowNonRootAccess()),
+		slog.String("controlMagsafeLed", string(f.ControlMagSafeLED())),
+		slog.Bool("noDrain", f.NoDrain()),
+	)
+}

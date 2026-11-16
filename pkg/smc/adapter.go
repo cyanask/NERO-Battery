@@ -1,0 +1,79 @@
+package smc
+
+import (
+	"fmt"
+
+	"github.com/charlie0129/batt/pkg/logging"
+	"github.com/pkg/errors"
+)
+
+var (
+	ErrNoAdapterCapability = errors.New("no adapter capability found")
+)
+
+// IsAdapterControlCapable reports whether a known adapter-control key exists.
+func (c *AppleSMC) IsAdapterControlCapable() bool {
+	return c.capabilities[AdapterKey1] || c.capabilities[AdapterKey2] || c.capabilities[AdapterKey3]
+}
+
+// IsAdapterEnabled returns whether the adapter is enabled.
+func (c *AppleSMC) IsAdapterEnabled() (bool, error) {
+	logging.Trace("IsAdapterEnabled called")
+
+	var ret bool
+	var key string
+
+	switch {
+	case c.capabilities[AdapterKey1]:
+		key = AdapterKey1
+	case c.capabilities[AdapterKey2]:
+		key = AdapterKey2
+	case c.capabilities[AdapterKey3]: // Tahoe firmware versions.
+		key = AdapterKey3
+	default:
+		return false, ErrNoAdapterCapability
+	}
+
+	v, err := c.Read(key)
+	if err != nil {
+		return false, err
+	}
+
+	ret = len(v.Bytes) == 1 && v.Bytes[0] == 0x0
+
+	logging.Trace(fmt.Sprintf("IsAdapterEnabled returned %t", ret))
+
+	return ret, nil
+}
+
+// EnableAdapter enables the adapter.
+func (c *AppleSMC) EnableAdapter() error {
+	logging.Trace("EnableAdapter called")
+
+	switch {
+	case c.capabilities[AdapterKey1]:
+		return c.Write(AdapterKey1, []byte{0x0})
+	case c.capabilities[AdapterKey2]:
+		return c.Write(AdapterKey2, []byte{0x0})
+	case c.capabilities[AdapterKey3]: // Tahoe firmware versions.
+		return c.Write(AdapterKey3, []byte{0x0})
+	default:
+		return ErrNoAdapterCapability
+	}
+}
+
+// DisableAdapter disables the adapter.
+func (c *AppleSMC) DisableAdapter() error {
+	logging.Trace("DisableAdapter called")
+
+	switch {
+	case c.capabilities[AdapterKey1]:
+		return c.Write(AdapterKey1, []byte{0x1})
+	case c.capabilities[AdapterKey2]:
+		return c.Write(AdapterKey2, []byte{0x1})
+	case c.capabilities[AdapterKey3]: // Tahoe firmware versions.
+		return c.Write(AdapterKey3, []byte{0x8})
+	default:
+		return ErrNoAdapterCapability
+	}
+}
