@@ -4,6 +4,9 @@
 extern void neroRefresh(void);
 extern void neroPerform(int action,const char *payload);
 extern void neroControlClientActive(int active);
+NSDictionary *NeroUSBPowerSnapshot(void);
+@class NeroController;
+void NeroRenderUSBPower(NeroController *controller);
 
 @interface NeroPrimaryButton:NSButton
 @end

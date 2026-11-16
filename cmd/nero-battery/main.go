@@ -7,6 +7,7 @@ package main
 #include <stdlib.h>
 void neroRun(void);
 char *neroIntentAudit(long charge);
+char *neroUSBPowerJSON(void);
 void neroRenderJSON(const char *json, int connected);
 void neroActionFinished(int action, int ok, const char *message);
 void neroHistoryJSON(const char *json);
@@ -90,6 +91,12 @@ func sendAction(action int, body string) ([]byte, error) {
 
 func main() {
 	defer closeControlClient()
+	if len(os.Args) == 2 && os.Args[1] == "--usb-power" {
+		p := C.neroUSBPowerJSON()
+		fmt.Println(C.GoString(p))
+		C.free(unsafe.Pointer(p))
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--intent-audit" {
 		charge := int64(-1)
 		if o, err := powerinfo.ReadObservation(); err == nil && o.Battery.ReportedChargePercent != nil {

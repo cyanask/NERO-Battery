@@ -8,6 +8,7 @@ static void chooseNumber(NSPopUpButton *popup,NSNumber *number){if(!number)retur
 
 @implementation NeroController(Render)
 - (void)render:(NSDictionary *)j connected:(BOOL)connected{
+ if(self.window.visible&&self.selectedPanel==0)NeroRenderUSBPower(self);
  self.connected=connected;self.lastStatus=j;
  NSDictionary *battery=NeroGet(j,@"observation.battery")?:@{},*power=NeroGet(j,@"observation.power")?:@{};
  NSInteger upper=[j[@"limit"]integerValue],lower=[j[@"lower_limit"]integerValue],target=[j[@"charge_target"]integerValue];
