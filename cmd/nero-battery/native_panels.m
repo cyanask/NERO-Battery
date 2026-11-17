@@ -29,7 +29,7 @@ static void metricRow(NeroController *o,NSStackView *stack,NSArray *keys,NSArray
  NSStackView *hero=NeroRow(@[self.gauge,summary,spring,quick]);hero.spacing=14;[s addArrangedSubview:hero];NeroFullWidth(hero,s);
  metricRow(self,root,@[@"temperature",@"health",@"cycles"],@[@"电池温度",@"容量比 · 最大 / 设计",@"循环次数"]);
  s=NeroCard(root);NeroSection(s,@"电力流向",@"功率为当前读数，系统耗电按功率差推算。");
- metricRow(self,s,@[@"adapter-power",@"battery-power",@"system-power",@"usb-output"],@[@"电源输入",@"电池净功率",@"系统耗电 · 推算",@"USB 输出 · 已报告合计"]);
+ metricRow(self,s,@[@"adapter-power",@"battery-power",@"system-power",@"usb-output"],@[@"电源输入",@"电池净功率",@"系统耗电 · 推算",@"USB 输出"]);
  [s addArrangedSubview:valueLabel(self,@"usb-ports",12)];NeroFullWidth(self.values[@"usb-ports"],s);
  [s addArrangedSubview:valueLabel(self,@"usb-note",11)];NeroFullWidth(self.values[@"usb-note"],s);
  [s addArrangedSubview:valueLabel(self,@"dashboard-safety",12)];[s addArrangedSubview:valueLabel(self,@"history-status",11)];NeroFullWidth(self.values[@"history-status"],s);

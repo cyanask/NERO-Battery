@@ -13,10 +13,11 @@ static NSNumber *usbNumber(id value) {
  return isfinite([value doubleValue])?value:nil;
 }
 
-// Only collect power reported in AppleSmartBattery.PowerOutDetails. PD offers,
-// requested current, max-current budgets and input/battery differences are never
-// substituted for an output measurement. Port indices are opaque system IDs.
-NSDictionary *NeroUSBPowerSnapshot(void) {
+NSDictionary *NeroSMCUSBPowerSnapshot(void);
+
+// Fallback only. These system-reported values may refresh more slowly than SMC.
+// Never substitute PD offers, budgets or input/battery differences.
+static NSDictionary *systemUSBPowerSnapshot(void) {
  NSMutableArray *inventory=NSMutableArray.new,*ports=NSMutableArray.new;
  io_iterator_t iterator=IO_OBJECT_NULL;
  if(IOServiceGetMatchingServices(kIOMainPortDefault,IOServiceMatching("AppleHPMInterface"),&iterator)==KERN_SUCCESS){
@@ -56,7 +57,17 @@ NSDictionary *NeroUSBPowerSnapshot(void) {
   }
   if(ports.count)state=complete?@"reported":@"partial";
  }else if(array){complete=NO;state=@"invalid";}
- return @{@"source":@"IORegistry/AppleSmartBattery/PowerOutDetails",@"state":state,@"read_only":@YES,@"reading_kind":@"system_report",@"usb_c_port_numbers":inventory,@"ports":ports,@"reported_total_watts":complete?@(total):NSNull.null,@"total_scope":@"reported_entries_only",@"device_attribution":@"unavailable"};
+ return @{@"schema":@2,@"source":@"IORegistry/AppleSmartBattery/PowerOutDetails",@"state":state,@"read_only":@YES,@"reading_kind":@"system_report",@"usb_c_port_numbers":inventory,@"ports":ports,@"reported_total_watts":complete?@(total):NSNull.null,@"total_watts":complete?@(total):NSNull.null,@"total_scope":@"reported_entries_only",@"device_attribution":@"unavailable"};
+}
+
+NSDictionary *NeroUSBPowerSnapshot(void){
+ NSDictionary *smc=NeroSMCUSBPowerSnapshot();
+ // Partial SMC results retain unknown totals. Never combine unlike providers.
+ if([smc[@"valid_port_count"]unsignedIntegerValue]>0)return smc;
+ NSMutableDictionary *fallback=[systemUSBPowerSnapshot()mutableCopy];
+ fallback[@"fallback_reason"]=@"SMC readings unavailable or port mapping unverified";
+ fallback[@"smc_state"]=smc[@"state"];
+ return fallback;
 }
 
 char *neroUSBPowerJSON(void){@autoreleasepool{
@@ -66,15 +77,18 @@ char *neroUSBPowerJSON(void){@autoreleasepool{
 
 void NeroRenderUSBPower(NeroController *controller){
  NSDictionary *s=NeroUSBPowerSnapshot();
- NeroValue(controller,@"usb-output",NeroMetricString(s[@"reported_total_watts"],@" W",2));
+ BOOL smc=[s[@"reading_kind"]isEqual:@"voltage_times_current"];
+ NeroValue(controller,@"usb-output",NeroMetricString(s[@"total_watts"],@" W",2));
  NSMutableArray *lines=NSMutableArray.new;
  for(NSDictionary *port in s[@"ports"]){
-  NSNumber *index=usbNumber(port[@"system_port_index"]);
-  NSString *name=index?[NSString stringWithFormat:@"系统输出端口 %@",index]:[NSString stringWithFormat:@"报告项 %@",port[@"report_index"]];
-  [lines addObject:[NSString stringWithFormat:@"%@  ·  %@",name,NeroMetricString(port[@"watts"],@" W",2)]];
+  NSNumber *index=usbNumber(port[smc?@"system_port_number":@"system_port_index"]);
+  NSString *name=index?[NSString stringWithFormat:smc?@"USB-C %@":@"系统输出端口 %@",index]:[NSString stringWithFormat:@"报告项 %@",port[@"report_index"]];
+  NSString *electrical=smc&&[port[@"device_reply_verified"]boolValue]?[NSString stringWithFormat:@"（%@ × %@）",NeroMetricString(port[@"volts"],@" V",3),NeroMetricString(port[@"amps"],@" A",3)]:@"";
+  [lines addObject:[NSString stringWithFormat:@"%@  ·  %@%@",name,NeroMetricString(port[@"watts"],@" W",2),electrical]];
  }
  if(!lines.count)for(NSNumber *number in s[@"usb_c_port_numbers"])[lines addObject:[NSString stringWithFormat:@"USB-C %@  ·  未报告",number]];
  NeroValue(controller,@"usb-ports",lines.count?[lines componentsJoinedByString:@"     "]:@"端口功率未报告");
- NSString *note=[s[@"state"] isEqual:@"reported"]?@"仅合计系统报告的输出记录；系统端口索引尚未映射到具体设备。":@"系统未提供完整输出读数；未报告不代表 0 W。协商功率和设备申报电流不计入。";
+ NSString *note=smc?([s[@"state"]isEqual:@"reported"]?@"SMC · 电压 × 电流换算；合计仅含已匹配的 USB-C 端口，不含 MagSafe。":@"SMC · 电压 × 电流换算；部分端口不可用，合计保持未知，不补零。"):
+ ([s[@"state"]isEqual:@"reported"]?@"SMC 暂不可用，现为系统报告；刷新可能较慢，系统索引不等于具体设备。":@"输出读数暂不可用；未报告不代表 0 W。不使用协商功率或申报电流。 ");
  NeroValue(controller,@"usb-note",note);
 }
