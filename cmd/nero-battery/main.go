@@ -3,10 +3,9 @@ package main
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework Cocoa -framework Intents
+#cgo LDFLAGS: -framework Cocoa
 #include <stdlib.h>
 void neroRun(void);
-char *neroIntentAudit(long charge);
 char *neroUSBPowerJSON(void);
 void neroRenderJSON(const char *json, int connected);
 void neroActionFinished(int action, int ok, const char *message);
@@ -93,16 +92,6 @@ func main() {
 	defer closeControlClient()
 	if len(os.Args) == 2 && os.Args[1] == "--usb-power" {
 		p := C.neroUSBPowerJSON()
-		fmt.Println(C.GoString(p))
-		C.free(unsafe.Pointer(p))
-		return
-	}
-	if len(os.Args) == 2 && os.Args[1] == "--intent-audit" {
-		charge := int64(-1)
-		if o, err := powerinfo.ReadObservation(); err == nil && o.Battery.ReportedChargePercent != nil {
-			charge = *o.Battery.ReportedChargePercent
-		}
-		p := C.neroIntentAudit(C.long(charge))
 		fmt.Println(C.GoString(p))
 		C.free(unsafe.Pointer(p))
 		return

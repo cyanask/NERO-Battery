@@ -1,8 +1,8 @@
 {
   "digest_format": "SHA256 of sorted (file SHA256 hex + NUL + relative path + LF), excluding SOURCE-INFO.json and Finder metadata",
-  "file_count": 735,
+  "file_count": 732,
   "go_toolchain": "go1.27.4",
   "schema": 1,
-  "snapshot_sha256": "570274aacb21c91ed73e42373610503a26cd0edec27dd34fb8ced205e75bdbfd",
-  "version": "1.2.0"
+  "snapshot_sha256": "960deb41a535d9bbb432a4180602739f0954ba9d2866f9aec2fa8bdde4992b68",
+  "version": "1.2.1"
 }

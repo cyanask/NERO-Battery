@@ -19,7 +19,7 @@ BUILD="$STAGE/build"
 RELEASE_VERSION=$(cat VERSION)
 RELEASE="$STAGE/NERO Battery $RELEASE_VERSION"
 APP="$RELEASE/app/NERO Battery.app"
-mkdir -p "$BUILD" "$APP/Contents/MacOS" "$APP/Contents/Resources/Base.lproj" "$RELEASE/bin" "$RELEASE/launchd" "$RELEASE/docs" "$RELEASE/licenses"
+mkdir -p "$BUILD" "$APP/Contents/MacOS" "$APP/Contents/Resources" "$RELEASE/bin" "$RELEASE/launchd" "$RELEASE/docs" "$RELEASE/licenses"
 "$GO" build -p 2 -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o "$RELEASE/bin/nero-setup" ./cmd/nero-setup
 # A deterministic digest of the clean exported source, excluding the digest itself.
 "$RELEASE/bin/nero-setup" --mode source-info --release "$ROOT"
@@ -28,7 +28,6 @@ for pair in 'nero-battery-helper' 'nero-control-client';do
 done
 "$GO" build -p 2 -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o "$APP/Contents/MacOS/nero-battery" ./cmd/nero-battery
 cp packaging/local/Info.plist "$APP/Contents/Info.plist"
-cp packaging/local/Battery.intentdefinition "$APP/Contents/Resources/Base.lproj/"
 cp LICENSE "$APP/Contents/Resources/LICENSE-batt.txt"
 /usr/bin/clang -O2 -mmacosx-version-min=14.0 -fobjc-arc -framework Cocoa packaging/local/artwork.m -o "$BUILD/render-artwork"
 "$BUILD/render-artwork" "$BUILD/artwork" "$BUILD/artwork-preview.png"

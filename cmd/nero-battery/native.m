@@ -51,7 +51,7 @@ void NeroSend(NSInteger action,id value){
  NSView *root=self.window.contentView;
  NSVisualEffectView *sidebar=[[NSVisualEffectView alloc]init];sidebar.material=NSVisualEffectMaterialSidebar;sidebar.blendingMode=NSVisualEffectBlendingModeBehindWindow;sidebar.translatesAutoresizingMaskIntoConstraints=NO;[root addSubview:sidebar];
  NSStackView *nav=[[NSStackView alloc]init];nav.orientation=NSUserInterfaceLayoutOrientationVertical;nav.alignment=NSLayoutAttributeLeading;nav.spacing=4;nav.translatesAutoresizingMaskIntoConstraints=NO;[sidebar addSubview:nav];
- NSArray *names=@[@"总览",@"充电与保护",@"电池校准",@"历史趋势",@"定时与捷径",@"能耗与电源",@"睡眠与合盖"];
+ NSArray *names=@[@"总览",@"充电与保护",@"电池校准",@"历史趋势",@"定时任务",@"能耗与电源",@"睡眠与合盖"];
  NSArray *symbols=@[@"square.grid.2x2",@"bolt.shield",@"arrow.triangle.2.circlepath",@"chart.xyaxis.line",@"calendar",@"waveform.path.ecg",@"moon.zzz"];
  for(NSNumber *index in @[@0,@1,@2,@6,@3,@4,@5]){NSInteger i=index.integerValue;
  if(i==1||i==3){NSTextField *group=NeroLabel(i==1?@"电池保养":@"记录与自动化",11,NSFontWeightMedium);group.textColor=NSColor.secondaryLabelColor;[nav addArrangedSubview:group];}

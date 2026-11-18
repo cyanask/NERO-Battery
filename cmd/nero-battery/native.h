@@ -109,7 +109,6 @@ void NeroRenderUSBPower(NeroController *controller);
 - (void)act:(id)sender;
 - (void)ruleRecurrence:(id)sender;
 - (void)editRule:(NSButton *)sender;
-- (void)openShortcuts:(id)sender;
 - (void)historyChanged:(id)sender;
 
 

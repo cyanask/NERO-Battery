@@ -55,7 +55,6 @@ static BOOL confirm(NSString *title,NSString *body,NSString *accept){
  self.chart.metric=@[@"charge",@"temperature_c",@"system_w"][self.historyMetric.selectedSegment];self.chart.needsDisplay=YES;self.historyRefreshAt=NSDate.date;
  NeroSend(30,@[@"1h",@"24h",@"7d",@"30d"][self.historyRange.selectedSegment]);
 }
-- (void)openShortcuts:(id)sender{[NSWorkspace.sharedWorkspace openURL:[NSURL fileURLWithPath:@"/System/Applications/Shortcuts.app"]];}
 - (void)ruleRecurrence:(id)sender{BOOL once=self.ruleDays.indexOfSelectedItem==4;self.ruleTime.datePickerElements=once?(NSDatePickerElementFlagYearMonthDay|NSDatePickerElementFlagHourMinute):NSDatePickerElementFlagHourMinute;for(NSButton *b in self.ruleWeekdays)b.enabled=self.ruleDays.indexOfSelectedItem==3;}
 - (void)editRule:(NSButton *)sender{
  for(NSDictionary *r in self.rules)if([r[@"id"]isEqualToString:sender.identifier]){

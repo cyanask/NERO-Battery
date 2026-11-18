@@ -78,7 +78,7 @@ static void metricRow(NeroController *o,NSStackView *stack,NSArray *keys,NSArray
  [s addArrangedSubview:NeroLabel(@"系统功率按适配器输入功率减去电池净充入功率推算；CPU / GPU / ANE 的系统估算在“能耗与电源”中查看。",12,NSFontWeightRegular)];
 }
 - (void)buildAutomation{
- NSStackView *root=[self newPanel];NeroSection(root,@"定时与捷径",@"按本机时间执行，睡眠期间不唤醒电脑，也不补执行错过的任务。");NSStackView *s=NeroCard(root);NeroSection(s,@"安排一项任务",nil);
+ NSStackView *root=[self newPanel];NeroSection(root,@"定时任务",@"按本机时间执行，睡眠期间不唤醒电脑，也不补执行错过的任务。");NSStackView *s=NeroCard(root);NeroSection(s,@"安排一项任务",nil);
  self.ruleName=[NSTextField textFieldWithString:@""];self.ruleName.placeholderString=@"任务名称（可选）";[s addArrangedSubview:self.ruleName];NeroFullWidth(self.ruleName,s);
  self.ruleAction=NeroPopup(@[@"设置充电上限",@"临时充满",@"取消临时充满",@"停止放电",@"手动放电 · 最长 1 小时",@"校准 · 20% / 60 分钟",@"自动电源模式",@"低电量模式",@"保持唤醒 30 分钟",@"保持唤醒 60 分钟",@"保持唤醒 180 分钟",@"恢复正常睡眠"],0);
  self.ruleDays=NeroPopup(@[@"每天",@"工作日",@"周末",@"指定星期",@"仅一次"],0);self.ruleDays.target=self;self.ruleDays.action=@selector(ruleRecurrence:);
@@ -87,7 +87,6 @@ static void metricRow(NeroController *o,NSStackView *stack,NSArray *keys,NSArray
  NSMutableArray *days=NSMutableArray.new;NSArray *dayTitles=@[@"日",@"一",@"二",@"三",@"四",@"五",@"六"];for(NSString *title in dayTitles){NSButton *b=[NSButton checkboxWithTitle:title target:nil action:nil];b.state=NSControlStateValueOn;[days addObject:b];}self.ruleWeekdays=days;[s addArrangedSubview:NeroRow(days)];
  self.ruleSave=[NSButton buttonWithTitle:@"添加任务…" target:self action:@selector(addRule:)];self.controls[@20]=self.ruleSave;formRow(s,@"充电上限",@[self.ruleLimit,self.ruleSave]);[self ruleRecurrence:nil];
  s=NeroCard(root);NeroSection(s,@"已安排",@"可编辑、停用或移除。结果及下次执行时间由本机后台记录。");self.ruleList=NSStackView.new;self.ruleList.orientation=NSUserInterfaceLayoutOrientationVertical;self.ruleList.alignment=NSLayoutAttributeLeading;self.ruleList.spacing=10;[s addArrangedSubview:self.ruleList];NeroFullWidth(self.ruleList,s);
- s=NeroCard(root);NeroSection(s,@"原生快捷指令 · 暂不可用",@"当前系统尚未显示本应用的原生动作，此项未通过验收。定时任务可独立使用。");[s addArrangedSubview:[NSButton buttonWithTitle:@"打开快捷指令" target:self action:@selector(openShortcuts:)]];
 }
 - (void)buildEnergy{
  NSStackView *root=[self newPanel];NSStackView *s=NeroCard(root);NeroSection(s,@"细分功率",@"使用 macOS powermetrics 单次约 1 秒采样。CPU / GPU / ANE 功率为系统估算；不支持的项目显示为 —。");
